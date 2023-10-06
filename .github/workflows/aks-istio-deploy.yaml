@@ -1,0 +1,45 @@
+name: aro-deploy
+on:
+  #push:
+  #  branches: ["main"]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: 'Specify the prefix for the name of all the resources'
+        required: true
+        default: 'demo'
+      location:
+        description: 'Specify the location of the Azure region'
+        required: true
+        default: 'eastus'
+
+permissions:
+      id-token: write
+      contents: read
+      
+jobs: 
+  infra-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 'Az CLI login'
+      uses: azure/login@v1
+      with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  
+    - name: 'Run Azure CLI commands to deploy infrastructure and AKS cluster'
+      run: |
+          PREFIX=${{ inputs.prefix }}
+          LOCATION=${{ inputs.location }}}
+          RESOURCEGROUP="${PREFIX}-aks-rg"
+          az group create --name $RESOURCEGROUP --location $LOCATION
+
+    - name: 'Run Azure CLI commands to deploy AKS cluster with Istio add-on'
+      run: |
+          AKS_NAME="${PREFIX}-aks"
+          AKS_NODEPOOL_NAME="${PREFIX}-nodepool-rg"
+
+          az aks create -g $RESOURCEGROUP -n $AKS_NAME -l $LOCATION --node-count 3 --node-resource-group $AKS_NODEPOOL_NAME --network-plugin azure --network-policy azure --enable-asm --enable-managed-identity
