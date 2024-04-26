@@ -1,0 +1,7 @@
+az monitor log-analytics workspace create --resource-group $KUBE_GROUP --workspace-name $KUBE_NAME --location $LOCATION -o none
+WORKSPACE_RESOURCE_ID=$(az monitor log-analytics workspace show --resource-group $KUBE_GROUP --workspace-name $KUBE_NAME -o json | jq '.id' -r)
+az aks enable-addons --resource-group $KUBE_GROUP --name $KUBE_NAME --enable-msi-auth-for-monitoring --addons monitoring --workspace-resource-id $WORKSPACE_RESOURCE_ID
+az aks update --enable-azure-monitor-metrics --resource-group $KUBE_GROUP --name $KUBE_NAME --azure-monitor-workspace-resource-id $PROM_RESOURCE_ID --grafana-resource-id $GF_WORKSPACE
+az monitor app-insights component create --app $KUBE_NAME-ai --location $LOCATION --resource-group $KUBE_GROUP --application-type web --kind web --workspace $WORKSPACE_RESOURCE_ID
+az monitor log-analytics workspace table update --resource-group $KUBE_GROUP  --workspace-name $KUBE_NAME --name ContainerLogV2  --plan Basic
+kubectl apply -f logging/container-azm-ms-agentconfig-v2.yaml 

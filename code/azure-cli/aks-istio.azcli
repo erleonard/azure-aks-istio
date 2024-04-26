@@ -1,0 +1,87 @@
+PREFIX="gps"
+LOCATION=eastus
+RESOURCEGROUP="${PREFIX}-aks-rg"
+
+VNET_NAME="${PREFIX}-vnet"
+VNET_AKS_SUBNET_NAME="aks-subnet"
+VNET_APPGW_SUBNET_NAME="appgw-subnet"
+
+AKS_NAME="${PREFIX}-aks"
+AKS_NODEPOOL_NAME="${PREFIX}-nodepool-rg"
+
+az aks get-versions --location $LOCATION --output table
+aks_version=$(az aks get-versions --location $LOCATION --output json | jq -r '.values | max_by(.patchVersions) | .patchVersions | keys[]' | tail -1)
+asm_version=$(az aks mesh get-revisions --location $LOCATION -o json | jq -r '.meshRevisions | max_by(.revision) | .revision' | tail -1)
+
+
+#Create resource group
+az group create --name $RESOURCEGROUP --location $LOCATION
+
+az network vnet create --resource-group $RESOURCEGROUP --name $VNET_NAME --address-prefixes 10.114.0.0/16
+az network vnet subnet create --resource-group $RESOURCEGROUP --vnet-name $VNET_NAME --name $VNET_AKS_SUBNET_NAME --address-prefixes 10.114.2.0/23
+
+VNET_AKS_SUBNET_ID=$(az network vnet subnet show --resource-group $RESOURCEGROUP --vnet-name $VNET_NAME --name $VNET_AKS_SUBNET_NAME --query id -o tsv)
+
+CURRENTUSER=$(az ad signed-in-user show --query id -o tsv)
+
+# Create Azure Monitor and Grafana resources
+
+# Log Analytics
+az monitor log-analytics workspace create --resource-group $RESOURCEGROUP --workspace-name $AKS_NAME --location $LOCATION
+workspaceId==$(az monitor log-analytics workspace show --resource-group $KUBE_GROUP --workspace-name $KUBE_NAME -o json | jq '.id' -r)
+# Prometheus
+az resource create \
+    --resource-group $RESOURCEGROUP \
+    --namespace microsoft.monitor \
+    --resource-type accounts \
+    --name "${PREFIX}-monitor" \
+    --location $LOCATION \
+    --properties '{}'
+
+# Grafana
+az grafana create \
+    --name "${PREFIX}-grafana" \
+    --resource-group $RESOURCEGROUP
+
+grafanaId=$(az grafana show \
+    --name "${PREFIX}-grafana" \
+    --resource-group $RESOURCEGROUP \
+    --query id \
+    --output tsv)
+
+azuremonitorId=$(az resource show \
+    --resource-group $RESOURCEGROUP \
+    --name "${PREFIX}-monitor" \
+    --resource-type "Microsoft.Monitor/accounts" \
+    --query id \
+    --output tsv)
+
+az role assignment create \
+    --assignee $CURRENTUSER \
+    --role 22926164-76b3-42b3-bc55-97df8dab3e41 \
+    --scope $grafanaId
+
+az aks create -g $RESOURCEGROUP -n $AKS_NAME -l $LOCATION \
+    --kubernetes-version $aks_version \
+    --node-count 3 \
+    --node-vm-size Standard_B4as_v2 \
+    --node-resource-group $AKS_NODEPOOL_NAME \
+    --os-sku AzureLinux \
+    --enable-addons monitoring \
+    --enable-azure-monitor-metrics \
+    --azure-monitor-workspace-resource-id $azuremonitorId \
+    --grafana-resource-id $grafanaId \
+    --network-plugin azure \
+    --network-plugin-mode overlay \
+    --pod-cidr 192.168.0.0/16 \
+    --network-policy azure \
+    --vnet-subnet-id $VNET_AKS_SUBNET_ID \
+    --enable-asm
+    --revision $asm_version
+
+
+
+ref:
+- https://learn.microsoft.com/en-us/azure/azure-monitor/containers/kubernetes-monitoring-enable?tabs=cli
+- https://learn.microsoft.com/en-us/azure/aks/istio-deploy-addon
+- https://learn.microsoft.com/en-us/azure/aks/azure-cni-powered-by-cilium
